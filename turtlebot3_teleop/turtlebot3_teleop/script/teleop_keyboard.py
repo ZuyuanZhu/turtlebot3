@@ -1,236 +1,87 @@
-#!/usr/bin/env python
-#
-# Copyright (c) 2011, Willow Garage, Inc.
-# All rights reserved.
-#
-# Software License Agreement (BSD License 2.0)
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions
-# are met:
-#
-#  * Redistributions of source code must retain the above copyright
-#    notice, this list of conditions and the following disclaimer.
-#  * Redistributions in binary form must reproduce the above
-#    copyright notice, this list of conditions and the following
-#    disclaimer in the documentation and/or other materials provided
-#    with the distribution.
-#  * Neither the name of {copyright_holder} nor the names of its
-#    contributors may be used to endorse or promote products derived
-#    from this software without specific prior written permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-# FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-# COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-# INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-# BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
-# ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-# POSSIBILITY OF SUCH DAMAGE.
-#
-# Author: Darby Lim
+#!/usr/bin/env python3
 
-import os
-import select
-import sys
 import rclpy
-
+from rclpy.node import Node
 from geometry_msgs.msg import Twist
-from rclpy.qos import QoSProfile
-
-if os.name == 'nt':
-    import msvcrt
-else:
-    import termios
-    import tty
-
-BURGER_MAX_LIN_VEL = 0.22
-BURGER_MAX_ANG_VEL = 2.84
-
-WAFFLE_MAX_LIN_VEL = 0.26
-WAFFLE_MAX_ANG_VEL = 1.82
-
-LIN_VEL_STEP_SIZE = 0.01
-ANG_VEL_STEP_SIZE = 0.1
-
-TURTLEBOT3_MODEL = os.environ['TURTLEBOT3_MODEL']
 
 msg = """
-Control Your TurtleBot3!
----------------------------
-Moving around:
-        w
-   a    s    d
-        x
-
-w/x : increase/decrease linear velocity (Burger : ~ 0.22, Waffle and Waffle Pi : ~ 0.26)
-a/d : increase/decrease angular velocity (Burger : ~ 2.84, Waffle and Waffle Pi : ~ 1.82)
-
-space key, s : force stop
+The robot will move along a predefined path to trigger the telejump.
+The robot's main movements:
+1. Turn 180 degree around.
+2. Move forward with speed 0.26m/s until reaching point (x=-8.6, y=1.14)
+3. Turn right with angular speed (?) until the robot's head direction is parallel to the wall.
+4. Move forward with speed 0.26m/s until robot telejump to the home position. 
 
 CTRL-C to quit
 """
 
-e = """
-Communications Failed
-"""
+# Constants
+FORWARD_SPEED = 0.26  # m/s
+TURN_SPEED = 0.6  # rad/s for angular velocity
+TURN_180_DURATION = 3.14 / TURN_SPEED  # Time to turn 180 degrees in seconds
+TURN_TO_YAW_DURATION = 1.02  # Approximate time to reach desired yaw with TURN_SPEED
 
+class AutoMoveBot(Node):
+    def __init__(self):
+        super().__init__('turtlebot3_auto')
+        self.pub = self.create_publisher(Twist, 'cmd_vel', 10)
 
-def get_key(settings):
-    if os.name == 'nt':
-        return msvcrt.getch().decode('utf-8')
-    tty.setraw(sys.stdin.fileno())
-    rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
-    if rlist:
-        key = sys.stdin.read(1)
-    else:
-        key = ''
-
-    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
-    return key
-
-
-def print_vels(target_linear_velocity, target_angular_velocity):
-    print('currently:\tlinear velocity {0}\t angular velocity {1} '.format(
-        target_linear_velocity,
-        target_angular_velocity))
-
-
-def make_simple_profile(output, input, slop):
-    if input > output:
-        output = min(input, output + slop)
-    elif input < output:
-        output = max(input, output - slop)
-    else:
-        output = input
-
-    return output
-
-
-def constrain(input_vel, low_bound, high_bound):
-    if input_vel < low_bound:
-        input_vel = low_bound
-    elif input_vel > high_bound:
-        input_vel = high_bound
-    else:
-        input_vel = input_vel
-
-    return input_vel
-
-
-def check_linear_limit_velocity(velocity):
-    if TURTLEBOT3_MODEL == 'burger':
-        return constrain(velocity, -BURGER_MAX_LIN_VEL, BURGER_MAX_LIN_VEL)
-    else:
-        return constrain(velocity, -WAFFLE_MAX_LIN_VEL, WAFFLE_MAX_LIN_VEL)
-
-
-def check_angular_limit_velocity(velocity):
-    if TURTLEBOT3_MODEL == 'burger':
-        return constrain(velocity, -BURGER_MAX_ANG_VEL, BURGER_MAX_ANG_VEL)
-    else:
-        return constrain(velocity, -WAFFLE_MAX_ANG_VEL, WAFFLE_MAX_ANG_VEL)
-
-
-def main():
-    settings = None
-    if os.name != 'nt':
-        settings = termios.tcgetattr(sys.stdin)
-
-    rclpy.init()
-
-    qos = QoSProfile(depth=10)
-    node = rclpy.create_node('teleop_keyboard')
-    pub = node.create_publisher(Twist, 'cmd_vel', qos)
-
-    status = 0
-    target_linear_velocity = 0.0
-    target_angular_velocity = 0.0
-    control_linear_velocity = 0.0
-    control_angular_velocity = 0.0
-
-    try:
-        print(msg)
-        while(1):
-            key = get_key(settings)
-            if key == 'w':
-                target_linear_velocity =\
-                    check_linear_limit_velocity(target_linear_velocity + LIN_VEL_STEP_SIZE)
-                status = status + 1
-                print_vels(target_linear_velocity, target_angular_velocity)
-            elif key == 'x':
-                target_linear_velocity =\
-                    check_linear_limit_velocity(target_linear_velocity - LIN_VEL_STEP_SIZE)
-                status = status + 1
-                print_vels(target_linear_velocity, target_angular_velocity)
-            elif key == 'a':
-                target_angular_velocity =\
-                    check_angular_limit_velocity(target_angular_velocity + ANG_VEL_STEP_SIZE)
-                status = status + 1
-                print_vels(target_linear_velocity, target_angular_velocity)
-            elif key == 'd':
-                target_angular_velocity =\
-                    check_angular_limit_velocity(target_angular_velocity - ANG_VEL_STEP_SIZE)
-                status = status + 1
-                print_vels(target_linear_velocity, target_angular_velocity)
-            elif key == ' ' or key == 's':
-                target_linear_velocity = 0.0
-                control_linear_velocity = 0.0
-                target_angular_velocity = 0.0
-                control_angular_velocity = 0.0
-                print_vels(target_linear_velocity, target_angular_velocity)
-            else:
-                if (key == '\x03'):
-                    break
-
-            if status == 20:
-                print(msg)
-                status = 0
-
-            twist = Twist()
-
-            control_linear_velocity = make_simple_profile(
-                control_linear_velocity,
-                target_linear_velocity,
-                (LIN_VEL_STEP_SIZE / 2.0))
-
-            twist.linear.x = control_linear_velocity
-            twist.linear.y = 0.0
-            twist.linear.z = 0.0
-
-            control_angular_velocity = make_simple_profile(
-                control_angular_velocity,
-                target_angular_velocity,
-                (ANG_VEL_STEP_SIZE / 2.0))
-
-            twist.angular.x = 0.0
-            twist.angular.y = 0.0
-            twist.angular.z = control_angular_velocity
-
-            pub.publish(twist)
-
-    except Exception as e:
-        print(e)
-
-    finally:
+    def move_forward(self, duration):
         twist = Twist()
-        twist.linear.x = 0.0
-        twist.linear.y = 0.0
-        twist.linear.z = 0.0
+        twist.linear.x = FORWARD_SPEED
+        self.pub.publish(twist)
+        rclpy.spin_once(self, timeout_sec=duration)
+        twist.linear.x = 0.0  # Stop
+        self.pub.publish(twist)
 
-        twist.angular.x = 0.0
-        twist.angular.y = 0.0
-        twist.angular.z = 0.0
+    def turn_around(self):
+        twist = Twist()
+        twist.angular.z = TURN_SPEED
+        self.pub.publish(twist)
+        rclpy.spin_once(self, timeout_sec=TURN_180_DURATION)
+        twist.angular.z = 0.0  # Stop
+        self.pub.publish(twist)
 
-        pub.publish(twist)
+    def turn_right_to_yaw(self):
+        twist = Twist()
+        twist.angular.z = -TURN_SPEED  # Assuming right turn requires negative speed
+        self.pub.publish(twist)
+        rclpy.spin_once(self, timeout_sec=TURN_TO_YAW_DURATION)
+        twist.angular.z = 0.0  # Stop
+        self.pub.publish(twist)
 
-        if os.name != 'nt':
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
+    def move_forward_until_condition(self):
+        print(msg)
+        self.turn_around()  # Step 1: Turn 180 degree
+        self.move_forward(TURN_180_DURATION)  # Using the turn duration for forward movement as an example
+        
+        # Here you would implement the actual movement and checking logic
+        # For demonstration, we're moving forward for a predefined duration
+        # Replace this with your condition for stopping
+        twist = Twist()
+        twist.linear.x = FORWARD_SPEED
+        self.pub.publish(twist)
+        start_time = self.get_clock().now()
+        while rclpy.ok():
+            current_time = self.get_clock().now()
+            elapsed_time = current_time - start_time
+            if elapsed_time.nanoseconds > TURN_TO_YAW_DURATION * 1e9:  # This is just a placeholder condition
+                break
+            rclpy.spin_once(self, timeout_sec=0.1)
+        twist.linear.x = 0.0  # Stop
+        self.pub.publish(twist)
 
+def main(args=None):
+    rclpy.init(args=args)
+    auto_move_bot = AutoMoveBot()
+    
+    try:
+        auto_move_bot.move_forward_until_condition()
+    except KeyboardInterrupt:
+        auto_move_bot.get_logger().info('Node was stopped manually.')
+    finally:
+        auto_move_bot.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
