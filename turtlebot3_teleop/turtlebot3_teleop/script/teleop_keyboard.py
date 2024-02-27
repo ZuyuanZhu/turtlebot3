@@ -26,8 +26,8 @@ TURN_SPEED_SLOW = 0.1
 angle_tolerance =0.01 # rad for  controlling error
 ROTATE_THRETHOLD = 0.0001  # threshold, robot's stop rotating
 MOVE_THRETHOLD = 0.0001  # threshold, robot's stop moving forward along x
-WALL_ANGLE = -2.093707 # angle of the slop wall, robot move along the wall to trigger telejump
-TARGET_POS1_X = -8.96    #-8.26
+WALL_ANGLE = -2.10 # angle of the slop wall, robot move along the wall to trigger telejump
+TARGET_POS1_X = -10.18    #-8.26
 TARGET_POS1_Y = 0.47
 
 TARGET_POS2_X = -4.50   #-8.26
@@ -147,7 +147,7 @@ class AutoMoveBot(Node):
                 (target_y - current_position.y) ** 2)
 
             # Debug information
-            self.get_logger().info(f'Robot Pose: ({current_position.x:.2f}, {current_position.y:.2f}) Distance to target: {distance_to_target:.2f} meters')
+            self.get_logger().info(f'Robot Pose: ({current_position.x:.2f}, {current_position.y:.2f}) target: ({target_x:.2f}, {target_y:.2f}) Distance to target: {distance_to_target:.2f} meters')
 
             if distance_to_target < tolerance:  # Stop if within tolerance
                 twist.linear.x = 0.0  # Stop moving forward
