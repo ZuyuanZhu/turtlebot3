@@ -25,6 +25,10 @@ TURN_SPEED = 0.2  # rad/s for angular velocity
 TURN_SPEED_SLOW = 0.1
 angle_tolerance =0.01 # rad for  controlling error
 ROTATE_THRETHOLD = 0.0001  # threshold, robot's stop rotating
+MOVE_THRETHOLD = 0.0001  # threshold, robot's stop moving forward along x
+WALL_ANGLE = 2.093707 # angle of the slop wall, robot move along the wall to trigger telejump
+TARGET_POS1_X = -8.96    #-8.26
+TARGET_POS1_Y = 0.47
 
 def angle_difference(target, current):
             diff = target - current
@@ -49,7 +53,7 @@ class AutoMoveBot(Node):
         (roll, pitch, yaw) = euler_from_quaternion(orientation_list)
         return yaw
 
-    def turn_around(self):
+    def turn_around(self, rotate_yaw=math.pi, clockwise=False):
         # if self.is_turning:
         #     return  # Avoid re-entering if already turning
 
@@ -58,7 +62,7 @@ class AutoMoveBot(Node):
             return
 
         initial_yaw = self.get_yaw_from_pose(self.current_pose)
-        target_yaw = initial_yaw + math.pi  # Add 180 degrees in radians
+        target_yaw = initial_yaw + rotate_yaw  # Add rotate_yaw degrees in radians
 
         # Normalize target_yaw to be within [-pi, pi]
         target_yaw = (target_yaw + math.pi) % (2 * math.pi) - math.pi
@@ -67,7 +71,10 @@ class AutoMoveBot(Node):
         self.get_logger().info(f'Initial yaw: {initial_yaw:.2f}, Target yaw: {target_yaw:.2f}')
 
         twist = Twist()
-        twist.angular.z = TURN_SPEED
+        if not clockwise:
+            twist.angular.z = TURN_SPEED
+        else:
+            twist.angular.z = -TURN_SPEED
         self.pub.publish(twist)
 
         while rclpy.ok():
@@ -75,10 +82,14 @@ class AutoMoveBot(Node):
             diff = angle_difference(target_yaw, current_yaw)
 
             # Debug information
-            self.get_logger().info(f'Current yaw: {current_yaw:.2f}, Angle difference: {diff:.2f}')
+            self.get_logger().info(f'Current yaw: {current_yaw:.2f}, Target yaw: {target_yaw:.2f}, Angle difference: {diff:.2f}')
 
             if diff < TURN_SPEED * 2:  # slow down
-                twist.angular.z = TURN_SPEED_SLOW
+                if not clockwise:
+                    twist.angular.z = TURN_SPEED_SLOW
+                else:
+                    twist.angular.z = -TURN_SPEED_SLOW
+                # twist.angular.z = TURN_SPEED_SLOW
                 self.pub.publish(twist)
 
             if diff < angle_tolerance:  # Adjust tolerance as needed
@@ -99,6 +110,15 @@ class AutoMoveBot(Node):
         else:
             self.get_logger().info(f'Stop rotating: {twist.angular.z:.2f}, Threthold: {ROTATE_THRETHOLD:.5f}')
             return False      
+
+    def is_moving(self):
+        twist = Twist()
+        if twist.linear.x > MOVE_THRETHOLD:
+            self.get_logger().info(f'Still moving: {twist.linear.x:.2f}, Threthold: {MOVE_THRETHOLD:.5f}')
+            return True
+        else:
+            self.get_logger().info(f'Stop moving: {twist.linear.x:.2f}, Threthold: {MOVE_THRETHOLD:.5f}')
+            return False 
 
     def move_forward_to_position(self, target_x, target_y, tolerance=0.1):
         if not self.current_pose:
@@ -129,7 +149,7 @@ class AutoMoveBot(Node):
             if distance_to_target < tolerance:  # Stop if within tolerance
                 twist.linear.x = 0.0  # Stop moving forward
                 self.pub.publish(twist)
-                self.get_logger().info('Reached target position. Stopping.')
+                self.get_logger().info(f'Reached target position ({target_x:.2f}, {target_y:.2f}). Stopping.')
                 break
 
             rclpy.spin_once(self, timeout_sec=0.1)
@@ -138,7 +158,7 @@ class AutoMoveBot(Node):
     def run(self):
         while rclpy.ok():
             if not self.is_turning_180:
-                self.turn_around()  # Turn 180 degrees
+                self.turn_around(math.pi)  # Turn 180 degrees
             else:
                 # empty run for 1 s   TODO
                 # Move to the target position after turning around
@@ -147,8 +167,12 @@ class AutoMoveBot(Node):
                     current_yaw = self.get_yaw_from_pose(self.current_pose)
                     self.get_logger().info(f'Current yaw: {current_yaw:.2f}')
 
-                    self.move_forward_to_position(-8.26, 0.47)
-                    break  # Exit the loop once the target position is reached
+                    self.move_forward_to_position(TARGET_POS1_X, TARGET_POS1_Y)
+                    # break  # Exit the loop once the target position is reached
+                    if not self.is_moving():
+                        self.turn_around(-WALL_ANGLE, True)
+                        break
+
             rclpy.spin_once(self, timeout_sec=0.1)
 
 def main(args=None):
